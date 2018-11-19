@@ -3,18 +3,32 @@ from __future__ import print_function
 import argparse
 import socket
 import sys
+import select
+import ipaddress
+from ast import literal_eval as make_tuple
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
-def send_with_response(sock, message, error, expected_response):
+def send_with_response(sock, message, error, error_message, expected_response):
     print(message)
     sock.sendall(message.encode('utf-8'))
-
     response = sock.recv(1024).decode("utf-8")
     print(response)
-    if expected_response not in response:
-        exit(error)
+    if not response or expected_response not in response:
+      sock.close()
+      eprint(error_message)
+      exit(error)
+    return response
+
+# returns ipv4 and portno parsed from server response to PASV
+ def parse_pasv_response(response):
+     tup = make_tuple(resp[26:len(resp) - 1])
+     ipstr = ".".join(tup[:4])
+     ip = ipaddress.ip_address(ipstr)
+     portno = (int(tup[4]) * 256) + int(tup[5])
+     return ip, portno
+
 
 def main():
 
@@ -32,46 +46,55 @@ def main():
       args = parser.parse_args()
 
   except SystemExit:
-      eprint("Syntax Error")
+      eprint("4: Syntax Error in client request")
       exit(4)
 
   try:
       s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
   except socket.error as err:
-      eprint('Error creating socket')
+      eprint('1: Cant connect to server')
       exit(1)
 
   try:
       host_ip = socket.gethostbyname(args.server)
   except socket.gaierror:
-      eprint('Error resolving host')
+      s.close()
+      eprint('1: Cant connect to server')
       exit(1)
 
+  s.settimeout(5.0)
   try:
       s.connect((host_ip, args.port))
   except Exception as err:
-      eprint('Error connection to server')
+      s.close()
+      eprint('1: Cant connect to server')
       exit(1)
 
-  response = s.recv(1024).decode("utf-8")
+ #s.setblocking(0)
+ #ready = select.select([s], [], [], 3)
+ #if ready[0]:
+ #    response = s.recv(1024).decode("utf-8")
 
+  response = s.recv(1024).decode("utf-8")
   print(response)
   if "220" not in response:
      exit(1)
 
-  message = "USER " + args.username
+  message = "USER " + args.username + "\r\n"
+  send_with_response(s, message, 2, "2: Authentication failed", "331")
 
-  send_with_response(s, message, 1, "331")
+  message = "PASS " + args.password + "\r\n"
+  send_with_response(s, message, 2, "2: Authentication failed", "230")
 
-  message = "PASS" + args.password
+  message = "LIST\r\n"
+  send_with_response(s, message, 4, "4: Syntax error in client request", "425")
 
-  send_with_response(s, message, 2, "230")
-
+  message = "PASV\r\n"
+  response = send_with_response(s, message, 4, "4: Syntax error in client request", "227")
+  ip, port = parse_pasv_response(response)
 
   s.close()
-
-  ##print("the socket has successfully connected to google on port == " + host_ip)
 
 
 main()
