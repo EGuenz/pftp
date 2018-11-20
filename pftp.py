@@ -7,6 +7,8 @@ import select
 import ipaddress
 import threading
 import time
+import re
+from queue import Queue
 from ast import literal_eval as make_tuple
 
 def eprint(*args, **kwargs):
@@ -20,6 +22,10 @@ def file_write(f, text, s):
       return '7: Error writing to file', 7
 
     return '0: Success', 0
+
+def get_file_size(response):
+    size = re.findall('\d+', response).pop()
+    return int(size)
 
 def send_with_response(sock, message, error, error_message, expected_response):
     print(message)
@@ -41,7 +47,7 @@ def parse_pasv_response(resp):
      portno = (tup[4] * 256) + tup[5]
      return ip, portno
 
-def ftp_listen(ip, port, file):
+def ftp_listen(ip, port, file, queue):
     try:
         servSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     except socket.error as err:
@@ -53,10 +59,14 @@ def ftp_listen(ip, port, file):
         servSock.close()
         return
 
+    bytes_expected = queue.get()
+    #print(bytes_expected)
     #wait for file to be downloaded
     time.sleep(.3)
     response = servSock.recv(1024)
-    if len(response) <= 0:
+    length = len(response)
+
+    if length <= 0:
         servSock.close()
         return
 
@@ -67,15 +77,16 @@ def ftp_listen(ip, port, file):
         return
 
     file_write(f, response, servSock)
-    length = len(response)
-    i = 0
-    while length == 1024:
+    totalRec = length
+    while totalRec < bytes_expected:
       response = servSock.recv(1024)
       length = len(response)
       if length <= 0:
           break
+      totalRec += length
       file_write(f, response, servSock)
 
+    #print ("Num of bytes received: " + str(totalRec))
     servSock.close()
     return
 
@@ -152,15 +163,21 @@ def main():
   response = send_with_response(s, message, 5, "5: Command PASV not implemented by server", "227")
   ip, port = parse_pasv_response(response)
 
+  q = Queue()
+
   try:
-     t = threading.Thread(target=ftp_listen, args=(ip, port, args.file))
+     t = threading.Thread(target=ftp_listen, args=(ip, port, args.file, q))
      t.start()
   except:
      eprint('7: Unable to start thread')
      exit(7)
 
   message = "RETR " + args.file + "\r\n"
-  send_with_response(s, message, 3, "3: File not found", "150")
+  response = send_with_response(s, message, 3, "3: File not found", "150")
+
+  #send file_size to thread
+  total_bytes = get_file_size(response)
+  q.put(total_bytes)
 
   t.join()
   response = s.recv(1024).decode("utf-8")
