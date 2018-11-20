@@ -5,10 +5,21 @@ import socket
 import sys
 import select
 import ipaddress
+import threading
+import time
 from ast import literal_eval as make_tuple
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
+
+def file_write(f, text, s):
+    try:
+      f.write(text)
+    except IOError:
+      s.close()
+      return '7: Error writing to file', 7
+
+    return '0: Success', 0
 
 def send_with_response(sock, message, error, error_message, expected_response):
     print(message)
@@ -30,6 +41,43 @@ def parse_pasv_response(resp):
      portno = (tup[4] * 256) + tup[5]
      return ip, portno
 
+def ftp_listen(ip, port, file):
+    try:
+        servSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    except socket.error as err:
+        return
+
+    try:
+        servSock.connect((str(ip), port))
+    except Exception as err:
+        servSock.close()
+        return
+
+    #wait for file to be downloaded
+    time.sleep(.3)
+    response = servSock.recv(1024)
+    if len(response) <= 0:
+        servSock.close()
+        return
+
+    try:
+      f = open(file, "ab")
+    except IOError:
+        servSock.close()
+        return
+
+    file_write(f, response, servSock)
+    length = len(response)
+    i = 0
+    while length == 1024:
+      response = servSock.recv(1024)
+      length = len(response)
+      if length <= 0:
+          break
+      file_write(f, response, servSock)
+
+    servSock.close()
+    return
 
 def main():
 
@@ -97,13 +145,33 @@ def main():
   message = "PASS " + args.password + "\r\n"
   send_with_response(s, message, 2, "2: Authentication failed", "230")
 
-  message = "LIST\r\n"
-  send_with_response(s, message, 4, "4: Syntax error in client request", "425")
+  #message = "LIST\r\n"
+  #send_with_response(s, message, 5, "5: Command not implemented by server", "425")
 
   message = "PASV\r\n"
-  response = send_with_response(s, message, 4, "4: Syntax error in client request", "227")
+  response = send_with_response(s, message, 5, "5: Command PASV not implemented by server", "227")
   ip, port = parse_pasv_response(response)
 
+  try:
+     t = threading.Thread(target=ftp_listen, args=(ip, port, args.file))
+     t.start()
+  except:
+     eprint('7: Unable to start thread')
+     exit(7)
+
+  message = "RETR " + args.file + "\r\n"
+  send_with_response(s, message, 3, "3: File not found", "150")
+
+  t.join()
+  response = s.recv(1024).decode("utf-8")
+  print(response)
+  if not response or "226" not in response:
+    s.close()
+    eprint("5: File was not downloaded")
+    exit(5)
+
+  message = "QUIT\r\n"
+  send_with_response(s, message, 7, "7: Cannot Quit", "221")
   s.close()
 
 
