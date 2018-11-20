@@ -14,6 +14,21 @@ from ast import literal_eval as make_tuple
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
+def test_order():
+    if '-f' in sys.argv and '-s' in sys.argv:
+        if sys.argv.index('-f') < sys.argv.index('-s'):
+            return False
+    if '-f' in sys.argv and '--server' in sys.argv:
+        if sys.argv.index('-f') < sys.argv.index('--server'):
+            return False
+    if '--file' in sys.argv and '--server' in sys.argv:
+        if sys.argv.index('--file') < sys.argv.index('--server'):
+            return False
+    if '--file' in sys.argv and '-s' in sys.argv:
+        if sys.argv.index('--file') < sys.argv.index('-s'):
+            return False
+    return True
+
 def file_write(f, text, s):
     try:
       f.write(text)
@@ -27,11 +42,13 @@ def get_file_size(response):
     size = re.findall('\d+', response).pop()
     return int(size)
 
-def send_with_response(sock, message, error, error_message, expected_response):
-    print(message)
+def send_with_response(sock, message, error, error_message, expected_response, log):
+    if log is not None and message is not None:
+       log.write("C -> S: " + message)
     sock.sendall(message.encode('utf-8'))
     response = sock.recv(1024).decode("utf-8")
-    print(response)
+    if log is not None and response is not None:
+       log.write("S -> C: " + response)
     if not response or expected_response not in response:
       sock.close()
       eprint(error_message)
@@ -118,6 +135,11 @@ def main():
       else:
             return
 
+  if not test_order():
+     parser.print_help()
+     eprint("4: Syntax Error in client request, server comes before file")
+     exit(4)
+
   try:
       s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -144,23 +166,27 @@ def main():
  #ready = select.select([s], [], [], 3)
  #if ready[0]:
  #    response = s.recv(1024).decode("utf-8")
+  log = None
+  if args.log is not None:
+      log = open(args.log, "a")
 
   response = s.recv(1024).decode("utf-8")
-  print(response)
+  if log is not None and response is not None:
+     log.write("S -> C: " + response)
   if "220" not in response:
      exit(1)
 
   message = "USER " + args.username + "\r\n"
-  send_with_response(s, message, 2, "2: Authentication failed", "331")
+  send_with_response(s, message, 2, "2: Authentication failed", "331", log)
 
   message = "PASS " + args.password + "\r\n"
-  send_with_response(s, message, 2, "2: Authentication failed", "230")
+  send_with_response(s, message, 2, "2: Authentication failed", "230", log)
 
   #message = "LIST\r\n"
   #send_with_response(s, message, 5, "5: Command not implemented by server", "425")
 
   message = "PASV\r\n"
-  response = send_with_response(s, message, 5, "5: Command PASV not implemented by server", "227")
+  response = send_with_response(s, message, 5, "5: Command PASV not implemented by server", "227", log)
   ip, port = parse_pasv_response(response)
 
   q = Queue()
@@ -173,7 +199,7 @@ def main():
      exit(7)
 
   message = "RETR " + args.file + "\r\n"
-  response = send_with_response(s, message, 3, "3: File not found", "150")
+  response = send_with_response(s, message, 3, "3: File not found", "150", log)
 
   #send file_size to thread
   total_bytes = get_file_size(response)
@@ -181,14 +207,15 @@ def main():
 
   t.join()
   response = s.recv(1024).decode("utf-8")
-  print(response)
+  if log is not None and response is not None:
+     log.write("S -> C: " + response)
   if not response or "226" not in response:
     s.close()
     eprint("5: File was not downloaded")
     exit(5)
 
   message = "QUIT\r\n"
-  send_with_response(s, message, 7, "7: Cannot Quit", "221")
+  send_with_response(s, message, 7, "7: Cannot Quit", "221", log)
   s.close()
 
 
