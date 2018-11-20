@@ -22,11 +22,12 @@ def send_with_response(sock, message, error, error_message, expected_response):
     return response
 
 # returns ipv4 and portno parsed from server response to PASV
- def parse_pasv_response(response):
-     tup = make_tuple(resp[26:len(resp) - 1])
-     ipstr = ".".join(tup[:4])
+def parse_pasv_response(resp):
+     tup = make_tuple(resp[26:len(resp) - 3])
+     tupStrs = [str(x) for x in tup]
+     ipstr = ".".join(tupStrs[:4])
      ip = ipaddress.ip_address(ipstr)
-     portno = (int(tup[4]) * 256) + int(tup[5])
+     portno = (tup[4] * 256) + tup[5]
      return ip, portno
 
 
@@ -42,12 +43,21 @@ def main():
   parser.add_argument("-P", "--password", metavar = "password", default = "user@localhost.localnet", help = "Uses the password password when logging into the FTP server (default value:user@localhost.localnet)")
   parser.add_argument("-l", "--log", metavar = "logfile", help = "Logs all the FTP commands exchanged with the server and the corresponding replies to file logfile")
 
+
   try:
       args = parser.parse_args()
 
   except SystemExit:
-      eprint("4: Syntax Error in client request")
-      exit(4)
+      if len(sys.argv)==1:
+         parser.print_help()
+         sys.exit(0)
+      if ('-h' not in sys.argv and '--help' not in sys.argv and
+          '--version' not in sys.argv and '-v' not in sys.argv and
+          len(sys.argv) != 1):
+            eprint("4: Syntax Error in client request")
+            exit(4)
+      else:
+            return
 
   try:
       s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
