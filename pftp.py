@@ -11,22 +11,30 @@ import re
 from queue import Queue
 from ast import literal_eval as make_tuple
 
+
+class ThrowingArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        exit(4)
+
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
-def test_order():
-    if '-f' in sys.argv and '-s' in sys.argv:
-        if sys.argv.index('-f') < sys.argv.index('-s'):
+def correct_order():
+    if '-s' in sys.argv and sys.argv.index('-s') != 1:
             return False
-    if '-f' in sys.argv and '--server' in sys.argv:
-        if sys.argv.index('-f') < sys.argv.index('--server'):
+    elif '--server' in sys.argv and sys.argv.index('--sever') != 1:
             return False
-    if '--file' in sys.argv and '--server' in sys.argv:
-        if sys.argv.index('--file') < sys.argv.index('--server'):
+
+    if '-f' in sys.argv and sys.argv.index('-f') != 3:
             return False
-    if '--file' in sys.argv and '-s' in sys.argv:
-        if sys.argv.index('--file') < sys.argv.index('-s'):
+    elif '--file' in sys.argv and sys.argv.index('--file') != 3:
             return False
+
+    else:
+        if '-t' in sys.argv and sys.argv.index('-t') != 1:
+                return False
+        elif '--thread' in sys.argv and sys.argv.index('--thread') != 1:
+                return False
     return True
 
 def file_write(f, text, s):
@@ -107,38 +115,57 @@ def ftp_listen(ip, port, file, queue):
     servSock.close()
     return
 
+def parse_args():
+    parser = ThrowingArgumentParser(description='Command line options ftp client',
+                                    usage = " pftp [-s hostname] [-f file] [options]\n\tpftp [-t config-file] [options]\n\tpftp -h | --help\n\tpftp -v | --version")
+
+    parser2 = ThrowingArgumentParser(description='Command line options ftp client',
+                                     usage = " pftp [-s hostname] [-f file] [options]\n\tpftp [-t config-file] [options]\n\tpftp -h | --help\n\tpftp -v | --version")
+
+    parser.add_argument("-v", "--version", action = 'version', version = "FTP client v1.0 Eli Guenzburger")
+    parser2.add_argument("-v", "--version", action = 'version', version = "FTP client v1.0 Eli Guenzburger")
+    parser.add_argument("-s", "--server", metavar = "hostname", help = "Specifies the server to download the file from", required = True)
+    parser.add_argument("-f", "--file", metavar = "filename", help = "Specify file to download", required = True)
+    parser2.add_argument("-t", "--thread", metavar = "config-file", help = "Specify para-config file", required = True)
+    parser.add_argument("-p", "--port", metavar = "port", type=int, default = 21, help = "Specifies the port to be used when contacting the server. (default value: 21).")
+    parser2.add_argument("-p", "--port", metavar = "port", type=int, default = 21, help = "Specifies the port to be used when contacting the server. (default value: 21).")
+    parser.add_argument("-n", "--username", metavar = "user", default = "anonymous", help = "Uses the username user when logging into the FTP server (default value: anonymous).")
+    parser2.add_argument("-n", "--username", metavar = "user", default = "anonymous", help = "Uses the username user when logging into the FTP server (default value: anonymous).")
+    parser.add_argument("-P", "--password", metavar = "password", default = "user@localhost.localnet", help = "Uses the password password when logging into the FTP server (default value:user@localhost.localnet)")
+    parser2.add_argument("-P", "--password", metavar = "password", default = "user@localhost.localnet", help = "Uses the password password when logging into the FTP server (default value:user@localhost.localnet)")
+    parser.add_argument("-l", "--log", metavar = "logfile", help = "Logs all the FTP commands exchanged with the server and the corresponding replies to file logfile")
+    parser2.add_argument("-l", "--log", metavar = "logfile", help = "Logs all the FTP commands exchanged with the server and the corresponding replies to file logfile")
+
+
+    try:
+        args = parser.parse_args()
+
+    except SystemExit:
+        if len(sys.argv)==1:
+           parser.print_help()
+           exit(0)
+
+        if ('-h' not in sys.argv and '--help' not in sys.argv and
+            '--version' not in sys.argv and '-v' not in sys.argv):
+
+            try :
+                args = parser2.parse_args()
+            except SystemExit:
+                parser.print_help()
+                eprint("4: Syntax Error in client request")
+                exit(4)
+        else:
+              exit(0)
+
+    if not correct_order():
+       parser.print_help()
+       eprint("4: Syntax Error in client request, out of order")
+       exit(4)
+
+    return args
+
 def main():
-
-  parser = argparse.ArgumentParser(description='Command line options ftp client',
-                                   usage = " pftp [-s hostname] [-f file] [options]\n\tpftp -h | --help\n\tpftp -v | --version")
-  parser.add_argument("-v", "--version", action = 'version', version = "FTP client v1.0 Eli Guenzburger")
-  parser.add_argument("-s", "--server", metavar = "hostname", help = "Specifies the server to download the file from", required=True)
-  parser.add_argument("-f", "--file", metavar = "filename", help = "Specify file to download", required=True)
-  parser.add_argument("-p", "--port", metavar = "port", type=int, default = 21, help = "Specifies the port to be used when contacting the server. (default value: 21).")
-  parser.add_argument("-n", "--username", metavar = "user", default = "anonymous", help = "Uses the username user when logging into the FTP server (default value: anonymous).")
-  parser.add_argument("-P", "--password", metavar = "password", default = "user@localhost.localnet", help = "Uses the password password when logging into the FTP server (default value:user@localhost.localnet)")
-  parser.add_argument("-l", "--log", metavar = "logfile", help = "Logs all the FTP commands exchanged with the server and the corresponding replies to file logfile")
-
-
-  try:
-      args = parser.parse_args()
-
-  except SystemExit:
-      if len(sys.argv)==1:
-         parser.print_help()
-         sys.exit(0)
-      if ('-h' not in sys.argv and '--help' not in sys.argv and
-          '--version' not in sys.argv and '-v' not in sys.argv and
-          len(sys.argv) != 1):
-            eprint("4: Syntax Error in client request")
-            exit(4)
-      else:
-            return
-
-  if not test_order():
-     parser.print_help()
-     eprint("4: Syntax Error in client request, server comes before file")
-     exit(4)
+  args = parse_args()
 
   try:
       s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
