@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-from __future__ import print_function
 import argparse
 import socket
 import sys
@@ -11,6 +10,16 @@ import re
 from queue import Queue
 from ast import literal_eval as make_tuple
 
+class ArgumentStruct:
+    def __init__(self, server, file, user, password, port, log, thread, numThreads):
+        self.server = server
+        self.file = file
+        self.user = user
+        self.password = password
+        self.port = port
+        self.log = log
+        self.thread = thread
+        self.numThreads = numThreads
 
 class ThrowingArgumentParser(argparse.ArgumentParser):
     def error(self, message):
@@ -37,6 +46,55 @@ def correct_order():
                 return False
     return True
 
+#returns starting download position and number of bytes to read for thread
+def download_position(t_count, num_threads, file_size):
+   downoad_size = file_size // num_threads
+   read_bytes = download_size
+   if (t_count = num_threads - 1):
+       read_bytes += (file_size % num_threads)
+   starting_pos = download_size * t_count
+   return starting_pos, read_bytes   
+
+def parse_config_line(line, num_threads, t_count, port, logfile):
+    try:
+      if line.find('ftp://') == 0:
+         line = line[6:]
+      username = line[:line.find(':')]
+      password = line[:line.find('@')]
+      line = line[line.find('@') + 1:]
+      server = line[:line.find('/')]
+      line = line[line.find('/') + 1:]
+      file = line
+    except:
+      return None
+
+    args = ArgumentStruct(server, file, username, password, port, logfile, t_count, num_threads)
+    return args
+
+def parse_config(args):
+    if args.thread is None:
+        return ([ArgumentStruct(args.server, args.file, args.username, args.password,
+                args.port, args.log, 0, 1)], 0, "")
+    try:
+        f = open(args.thread, 'r')
+    except IOError:
+        return None, 7, "Error opening file"
+
+    line_count = 0
+    for line in f:
+        line_count += 1
+
+    thread_list = []
+    t_count = 0
+    for line in f:
+       t_count += 1
+       arg = parse_config_line(line, line_count, t_count, args.port, args.log)
+       if arg is None:
+           return None, 4, "Syntax Error in Config file"
+       list.append(arg)
+    return list, 0, ""
+
+
 def file_write(f, text, s):
     try:
       f.write(text)
@@ -50,13 +108,17 @@ def get_file_size(response):
     size = re.findall('\d+', response).pop()
     return int(size)
 
-def send_with_response(sock, message, error, error_message, expected_response, log):
+def send_with_response(sock, message, error, error_message, expected_response, log, lock):
     if log is not None and message is not None:
+       lock.acquire()
        log.write("C -> S: " + message)
+       lock.release()
     sock.sendall(message.encode('utf-8'))
     response = sock.recv(1024).decode("utf-8")
     if log is not None and response is not None:
+       lock.acquire()
        log.write("S -> C: " + response)
+       lock.release()
     if not response or expected_response not in response:
       sock.close()
       eprint(error_message)
@@ -72,7 +134,7 @@ def parse_pasv_response(resp):
      portno = (tup[4] * 256) + tup[5]
      return ip, portno
 
-def ftp_listen(ip, port, file, queue):
+def ftp_listen(ip, port, f, queue):
     try:
         servSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     except socket.error as err:
@@ -92,12 +154,6 @@ def ftp_listen(ip, port, file, queue):
     length = len(response)
 
     if length <= 0:
-        servSock.close()
-        return
-
-    try:
-      f = open(file, "ab")
-    except IOError:
         servSock.close()
         return
 
@@ -164,86 +220,107 @@ def parse_args():
 
     return args
 
+def execute_ftp(args, log, file, lock):
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    except socket.error as err:
+        eprint('1: Cant connect to server')
+        exit(1)
+
+    try:
+        host_ip = socket.gethostbyname(args.server)
+    except socket.gaierror:
+        s.close()
+        eprint('1: Cant connect to server')
+        exit(1)
+
+    #s.settimeout(5.0)
+    try:
+        s.connect((host_ip, args.port))
+    except Exception as err:
+        s.close()
+        eprint('1: Cant connect to server')
+        exit(1)
+
+    response = s.recv(1024).decode("utf-8")
+    if log is not None and response is not None:
+       lock.acquire()
+       log.write("S -> C: " + response)
+       lock.release()
+    if "220" not in response:
+       exit(1)
+
+    message = "USER " + args.username + "\r\n"
+    send_with_response(s, message, 2, "2: Authentication failed", "331", log, lock)
+
+    message = "PASS " + args.password + "\r\n"
+    send_with_response(s, message, 2, "2: Authentication failed", "230", log, lock)
+
+    message = "PASV\r\n"
+    response = send_with_response(s, message, 5, "5: Command PASV not implemented by server", "227", log, lock)
+    ip, port = parse_pasv_response(response)
+
+    q = Queue()
+
+    try:
+       t = threading.Thread(target=ftp_listen, args=(ip, port, file, q))
+       t.start()
+    except:
+       eprint('7: Unable to start thread')
+       exit(7)
+
+    message = "SIZE" + args.file + "\r\n"
+    response = send_with_response(s, message, 3, "3: File not found", "213 ", log, lock)
+    file_size = get_file_size(response)
+    starting_pos, read_size = download_position(args.thread, args.numThreads, file_size)
+
+    message = "REST" + string(starting_pos) + "\r\n"
+    send_with_response(s, message, 5, "5: Server will not set file position", "350 ", log, lock)
+    #send read_size to thread
+    q.put(read_size)
+
+    message = "RETR " + args.file + "\r\n"
+    send_with_response(s, message, 3, "3: File not found", "150", log, lock)
+
+    t.join()
+    response = s.recv(1024).decode("utf-8")
+    if log is not None and response is not None:
+       lock.acquire()
+       log.write("S -> C: " + response)
+       lock.release()
+    if not response or "226" not in response:
+      s.close()
+      eprint("5: File was not downloaded")
+      exit(5)
+
+    message = "QUIT\r\n"
+    send_with_response(s, message, 7, "7: Cannot Quit", "221", log, lock)
+    s.close()
+
 def main():
   args = parse_args()
+  thread_list = parse_config(args)
 
-  try:
-      s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-  except socket.error as err:
-      eprint('1: Cant connect to server')
-      exit(1)
-
-  try:
-      host_ip = socket.gethostbyname(args.server)
-  except socket.gaierror:
-      s.close()
-      eprint('1: Cant connect to server')
-      exit(1)
-
-  s.settimeout(5.0)
-  try:
-      s.connect((host_ip, args.port))
-  except Exception as err:
-      s.close()
-      eprint('1: Cant connect to server')
-      exit(1)
-
- #s.setblocking(0)
- #ready = select.select([s], [], [], 3)
- #if ready[0]:
- #    response = s.recv(1024).decode("utf-8")
   log = None
   if args.log is not None:
-      log = open(args.log, "a")
+      log = open(args.log, "w")
 
-  response = s.recv(1024).decode("utf-8")
-  if log is not None and response is not None:
-     log.write("S -> C: " + response)
-  if "220" not in response:
-     exit(1)
+   try:
+     f = open(args.file, "wb")
+   except IOError:
+       servSock.close()
+       return
 
-  message = "USER " + args.username + "\r\n"
-  send_with_response(s, message, 2, "2: Authentication failed", "331", log)
+   lock = threading.Lock()
+   for t in thread_list:
+     try:
+        thread = threading.Thread(target=execute_ftp, args=(t, log, f, lock))
+        t.start()
+     except:
+        eprint('7: Unable to start thread')
+        exit(7)
 
-  message = "PASS " + args.password + "\r\n"
-  send_with_response(s, message, 2, "2: Authentication failed", "230", log)
-
-  #message = "LIST\r\n"
-  #send_with_response(s, message, 5, "5: Command not implemented by server", "425")
-
-  message = "PASV\r\n"
-  response = send_with_response(s, message, 5, "5: Command PASV not implemented by server", "227", log)
-  ip, port = parse_pasv_response(response)
-
-  q = Queue()
-
-  try:
-     t = threading.Thread(target=ftp_listen, args=(ip, port, args.file, q))
-     t.start()
-  except:
-     eprint('7: Unable to start thread')
-     exit(7)
-
-  message = "RETR " + args.file + "\r\n"
-  response = send_with_response(s, message, 3, "3: File not found", "150", log)
-
-  #send file_size to thread
-  total_bytes = get_file_size(response)
-  q.put(total_bytes)
-
-  t.join()
-  response = s.recv(1024).decode("utf-8")
-  if log is not None and response is not None:
-     log.write("S -> C: " + response)
-  if not response or "226" not in response:
-    s.close()
-    eprint("5: File was not downloaded")
-    exit(5)
-
-  message = "QUIT\r\n"
-  send_with_response(s, message, 7, "7: Cannot Quit", "221", log)
-  s.close()
 
 
 main()
