@@ -49,11 +49,12 @@ def parse_config_line(line, num_threads, t_count, port, logfile):
       if line.find('ftp://') == 0:
          line = line[6:]
       username = line[:line.find(':')]
+      line = line[line.find(':') + 1:]
       password = line[:line.find('@')]
       line = line[line.find('@') + 1:]
       server = line[:line.find('/')]
       line = line[line.find('/') + 1:]
-      file = line
+      file = line[:line.find('\n')]
     except:
       return None
 
@@ -81,29 +82,31 @@ def parse_config(args):
         't_count' : 0,
         'num_threads' : 1
         }
-        return [argdict]
+        return [argdict], 0, ""
     try:
         f = open(args.thread, 'r')
     except IOError:
         return None, 7, "Error opening file"
 
     line_count = 0
-    for line in f:
+    for line in f.readlines():
         line_count += 1
-
     thread_list = []
     t_count = 0
-    for line in f:
-       t_count += 1
+    f.seek(0)
+    for line in f.readlines():
        argdict = parse_config_line(line, line_count, t_count, args.port, args.log)
        if argdict is None:
            return None, 4, "Syntax Error in Config file"
-       list.append(argdict)
-    return list, 0, ""
+       print(argdict)
+       thread_list.append(argdict)
+       t_count += 1
+    return thread_list, 0, ""
 
 
-def file_write(f, text, s):
+def file_write(f, text, s, starting_pos):
     try:
+      f.seek(starting_pos)
       f.write(text)
     except IOError:
       s.close()
@@ -141,7 +144,7 @@ def parse_pasv_response(resp):
      portno = (tup[4] * 256) + tup[5]
      return ip, portno
 
-def ftp_listen(ip, port, f, queue):
+def ftp_listen(ip, port, f, queue, starting_pos):
     try:
         servSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     except socket.error as err:
@@ -164,7 +167,7 @@ def ftp_listen(ip, port, f, queue):
         servSock.close()
         return
 
-    file_write(f, response, servSock)
+    file_write(f, response, servSock, starting_pos)
     totalRec = length
     while totalRec < bytes_expected:
       response = servSock.recv(1024)
@@ -172,7 +175,8 @@ def ftp_listen(ip, port, f, queue):
       if length <= 0:
           break
       totalRec += length
-      file_write(f, response, servSock)
+      starting_pos += totalRec
+      file_write(f, response, servSock, starting_pos)
 
     #print ("Num of bytes received: " + str(totalRec))
     servSock.close()
@@ -268,30 +272,34 @@ def execute_ftp(args, log, file, lock):
     response = send_with_response(s, message, 5, "5: Command PASV not implemented by server", "227", log, lock)
     ip, port = parse_pasv_response(response)
 
-    q = Queue()
-
-    try:
-       t = threading.Thread(target=ftp_listen, args=(ip, port, file, q))
-       t.start()
-    except:
-       eprint('7: Unable to start listening thread')
-       exit(7)
 
     message = "SIZE " + args["file"] + "\r\n"
     response = send_with_response(s, message, 3, "3: File not found on SIZE", "213 ", log, lock)
     file_size = get_file_size(response)
     starting_pos, read_size = download_position(args["t_count"], args["num_threads"], file_size)
 
+    q = Queue()
+
+    try:
+       t = threading.Thread(target=ftp_listen, args=(ip, port, file, q, starting_pos))
+       t.start()
+    except:
+       eprint('7: Unable to start listening thread')
+       exit(7)
+
     message = "REST " + str(starting_pos) + "\r\n"
+    print(message)
     send_with_response(s, message, 5, "5: Server will not set file position", "350 ", log, lock)
     #send read_size to thread
     q.put(read_size)
 
     message = "RETR " + args["file"] + "\r\n"
+    print(message)
     send_with_response(s, message, 3, "3: File not found on RETR", "150", log, lock)
 
     t.join()
     response = s.recv(1024).decode("utf-8")
+    print(response)
     if log is not None and response is not None:
        lock.acquire()
        log.write("S -> C: " + response)
@@ -307,7 +315,10 @@ def execute_ftp(args, log, file, lock):
 
 def main():
    args = parse_args()
-   thread_list = parse_config(args)
+   thread_list, code, err = parse_config(args)
+   if code != 0:
+       eprint(err)
+       exit(code)
 
    log = None
    if args.log is not None:
@@ -316,7 +327,6 @@ def main():
    try:
      f = open(thread_list[0]["file"], "wb")
    except IOError:
-       servSock.close()
        return
 
    lock = threading.Lock()
