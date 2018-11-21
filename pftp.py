@@ -10,17 +10,6 @@ import re
 from queue import Queue
 from ast import literal_eval as make_tuple
 
-class ArgumentStruct:
-    def __init__(self, server, file, user, password, port, log, thread, numThreads):
-        self.server = server
-        self.file = file
-        self.user = user
-        self.password = password
-        self.port = port
-        self.log = log
-        self.thread = thread
-        self.numThreads = numThreads
-
 class ThrowingArgumentParser(argparse.ArgumentParser):
     def error(self, message):
         exit(4)
@@ -48,7 +37,7 @@ def correct_order():
 
 #returns starting download position and number of bytes to read for thread
 def download_position(t_count, num_threads, file_size):
-   downoad_size = file_size // num_threads
+   download_size = file_size // num_threads
    read_bytes = download_size
    if (t_count == num_threads - 1):
        read_bytes += (file_size % num_threads)
@@ -68,13 +57,31 @@ def parse_config_line(line, num_threads, t_count, port, logfile):
     except:
       return None
 
-    args = ArgumentStruct(server, file, username, password, port, logfile, t_count, num_threads)
+    args = {
+    'server' : server,
+    'file' : file,
+    'username' : username,
+    'password' : password,
+    'port' : port,
+    'logfile' : logfile,
+    't_count' : t_count,
+    'num_threads' : num_threads
+    }
     return args
 
 def parse_config(args):
     if not hasattr(args, 'thread'):
-        return ([ArgumentStruct(args.server, args.file, args.username, args.password,
-                args.port, args.log, 0, 1)], 0, "")
+        argdict = args = {
+        'server' : args.server,
+        'file' : args.file,
+        'username' : args.username,
+        'password' : args.password,
+        'port' : args.port,
+        'logfile' : args.log,
+        't_count' : 0,
+        'num_threads' : 1
+        }
+        return [argdict]
     try:
         f = open(args.thread, 'r')
     except IOError:
@@ -88,10 +95,10 @@ def parse_config(args):
     t_count = 0
     for line in f:
        t_count += 1
-       arg = parse_config_line(line, line_count, t_count, args.port, args.log)
-       if arg is None:
+       argdict = parse_config_line(line, line_count, t_count, args.port, args.log)
+       if argdict is None:
            return None, 4, "Syntax Error in Config file"
-       list.append(arg)
+       list.append(argdict)
     return list, 0, ""
 
 
@@ -229,7 +236,7 @@ def execute_ftp(args, log, file, lock):
         exit(1)
 
     try:
-        host_ip = socket.gethostbyname(args.server)
+        host_ip = socket.gethostbyname(args["server"])
     except socket.gaierror:
         s.close()
         eprint('1: Cant connect to server')
@@ -237,7 +244,7 @@ def execute_ftp(args, log, file, lock):
 
     #s.settimeout(5.0)
     try:
-        s.connect((host_ip, args.port))
+        s.connect((host_ip, args["port"]))
     except Exception as err:
         s.close()
         eprint('1: Cant connect to server')
@@ -251,10 +258,10 @@ def execute_ftp(args, log, file, lock):
     if "220" not in response:
        exit(1)
 
-    message = "USER " + args.username + "\r\n"
+    message = "USER " + args["username"] + "\r\n"
     send_with_response(s, message, 2, "2: Authentication failed", "331", log, lock)
 
-    message = "PASS " + args.password + "\r\n"
+    message = "PASS " + args["password"] + "\r\n"
     send_with_response(s, message, 2, "2: Authentication failed", "230", log, lock)
 
     message = "PASV\r\n"
@@ -270,18 +277,18 @@ def execute_ftp(args, log, file, lock):
        eprint('7: Unable to start listening thread')
        exit(7)
 
-    message = "SIZE" + args.file + "\r\n"
-    response = send_with_response(s, message, 3, "3: File not found", "213 ", log, lock)
+    message = "SIZE " + args["file"] + "\r\n"
+    response = send_with_response(s, message, 3, "3: File not found on SIZE", "213 ", log, lock)
     file_size = get_file_size(response)
-    starting_pos, read_size = download_position(args.thread, args.numThreads, file_size)
+    starting_pos, read_size = download_position(args["t_count"], args["num_threads"], file_size)
 
-    message = "REST" + string(starting_pos) + "\r\n"
+    message = "REST " + str(starting_pos) + "\r\n"
     send_with_response(s, message, 5, "5: Server will not set file position", "350 ", log, lock)
     #send read_size to thread
     q.put(read_size)
 
-    message = "RETR " + args.file + "\r\n"
-    send_with_response(s, message, 3, "3: File not found", "150", log, lock)
+    message = "RETR " + args["file"] + "\r\n"
+    send_with_response(s, message, 3, "3: File not found on RETR", "150", log, lock)
 
     t.join()
     response = s.recv(1024).decode("utf-8")
@@ -307,7 +314,7 @@ def main():
       log = open(args.log, "w")
 
    try:
-     f = open(args.file, "wb")
+     f = open(thread_list[0]["file"], "wb")
    except IOError:
        servSock.close()
        return
