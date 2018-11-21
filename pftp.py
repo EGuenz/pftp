@@ -144,7 +144,7 @@ def parse_pasv_response(resp):
      portno = (tup[4] * 256) + tup[5]
      return ip, portno
 
-def ftp_listen(ip, port, f, queue, starting_pos):
+def ftp_listen(ip, port, f, bytes_expected, starting_pos):
     try:
         servSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     except socket.error as err:
@@ -156,7 +156,6 @@ def ftp_listen(ip, port, f, queue, starting_pos):
         servSock.close()
         return
 
-    bytes_expected = queue.get()
     #print(bytes_expected)
     #wait for file to be downloaded
     time.sleep(.3)
@@ -166,17 +165,17 @@ def ftp_listen(ip, port, f, queue, starting_pos):
     if length <= 0:
         servSock.close()
         return
-
     file_write(f, response, servSock, starting_pos)
     totalRec = length
+    starting_pos += length
     while totalRec < bytes_expected:
       response = servSock.recv(1024)
       length = len(response)
       if length <= 0:
           break
       totalRec += length
-      starting_pos += totalRec
       file_write(f, response, servSock, starting_pos)
+      starting_pos += length
 
     #print ("Num of bytes received: " + str(totalRec))
     servSock.close()
@@ -280,18 +279,18 @@ def execute_ftp(args, log, file, lock):
 
     q = Queue()
 
-    try:
-       t = threading.Thread(target=ftp_listen, args=(ip, port, file, q, starting_pos))
-       t.start()
-    except:
-       eprint('7: Unable to start listening thread')
-       exit(7)
 
     message = "REST " + str(starting_pos) + "\r\n"
     print(message)
     send_with_response(s, message, 5, "5: Server will not set file position", "350 ", log, lock)
     #send read_size to thread
-    q.put(read_size)
+
+    try:
+       t = threading.Thread(target=ftp_listen, args=(ip, port, file, read_size, starting_pos))
+       t.start()
+    except:
+       eprint('7: Unable to start listening thread')
+       exit(7)
 
     message = "RETR " + args["file"] + "\r\n"
     print(message)
