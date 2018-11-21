@@ -50,10 +50,10 @@ def correct_order():
 def download_position(t_count, num_threads, file_size):
    downoad_size = file_size // num_threads
    read_bytes = download_size
-   if (t_count = num_threads - 1):
+   if (t_count == num_threads - 1):
        read_bytes += (file_size % num_threads)
    starting_pos = download_size * t_count
-   return starting_pos, read_bytes   
+   return starting_pos, read_bytes
 
 def parse_config_line(line, num_threads, t_count, port, logfile):
     try:
@@ -72,7 +72,7 @@ def parse_config_line(line, num_threads, t_count, port, logfile):
     return args
 
 def parse_config(args):
-    if args.thread is None:
+    if not hasattr(args, 'thread'):
         return ([ArgumentStruct(args.server, args.file, args.username, args.password,
                 args.port, args.log, 0, 1)], 0, "")
     try:
@@ -267,7 +267,7 @@ def execute_ftp(args, log, file, lock):
        t = threading.Thread(target=ftp_listen, args=(ip, port, file, q))
        t.start()
     except:
-       eprint('7: Unable to start thread')
+       eprint('7: Unable to start listening thread')
        exit(7)
 
     message = "SIZE" + args.file + "\r\n"
@@ -299,11 +299,11 @@ def execute_ftp(args, log, file, lock):
     s.close()
 
 def main():
-  args = parse_args()
-  thread_list = parse_config(args)
+   args = parse_args()
+   thread_list = parse_config(args)
 
-  log = None
-  if args.log is not None:
+   log = None
+   if args.log is not None:
       log = open(args.log, "w")
 
    try:
@@ -316,7 +316,8 @@ def main():
    for t in thread_list:
      try:
         thread = threading.Thread(target=execute_ftp, args=(t, log, f, lock))
-        t.start()
+        thread.start()
+        thread.join()
      except:
         eprint('7: Unable to start thread')
         exit(7)
