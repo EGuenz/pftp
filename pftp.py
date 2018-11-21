@@ -17,6 +17,12 @@ class ThrowingArgumentParser(argparse.ArgumentParser):
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
+def send_quit(socket, log, lock, code):
+    message = "QUIT\r\n"
+    send_with_response(socket, message, 7, "7: Cannot Quit", "221", log, lock)
+    socket.close()
+    exit(code)
+
 def correct_order():
     if '-s' in sys.argv and sys.argv.index('-s') != 1:
             return False
@@ -98,7 +104,6 @@ def parse_config(args):
        argdict = parse_config_line(line, line_count, t_count, args.port, args.log)
        if argdict is None:
            return None, 4, "Syntax Error in Config file"
-       print(argdict)
        thread_list.append(argdict)
        t_count += 1
     return thread_list, 0, ""
@@ -130,9 +135,11 @@ def send_with_response(sock, message, error, error_message, expected_response, l
        log.write("S -> C: " + response)
        lock.release()
     if not response or expected_response not in response:
-      sock.close()
+      #Checks not called from send_quit
+      if "QUIT" not in message:
+        send_quit(sock, log, lock, error)
+
       eprint(error_message)
-      exit(error)
     return response
 
 # returns ipv4 and portno parsed from server response to PASV
@@ -156,7 +163,6 @@ def ftp_listen(ip, port, f, bytes_expected, starting_pos):
         servSock.close()
         return
 
-    #print(bytes_expected)
     #wait for file to be downloaded
     time.sleep(.3)
     response = servSock.recv(1024)
@@ -271,17 +277,19 @@ def execute_ftp(args, log, file, lock):
     response = send_with_response(s, message, 5, "5: Command PASV not implemented by server", "227", log, lock)
     ip, port = parse_pasv_response(response)
 
+    message = "TYPE I\r\n"
+    send_with_response(s, message, 5, "5: Command TYPE I not implemented by server", "200", log, lock)
+
 
     message = "SIZE " + args["file"] + "\r\n"
     response = send_with_response(s, message, 3, "3: File not found on SIZE", "213 ", log, lock)
     file_size = get_file_size(response)
     starting_pos, read_size = download_position(args["t_count"], args["num_threads"], file_size)
 
-    q = Queue()
+    #q = Queue()
 
 
     message = "REST " + str(starting_pos) + "\r\n"
-    print(message)
     send_with_response(s, message, 5, "5: Server will not set file position", "350 ", log, lock)
     #send read_size to thread
 
@@ -293,24 +301,20 @@ def execute_ftp(args, log, file, lock):
        exit(7)
 
     message = "RETR " + args["file"] + "\r\n"
-    print(message)
     send_with_response(s, message, 3, "3: File not found on RETR", "150", log, lock)
 
     t.join()
     response = s.recv(1024).decode("utf-8")
-    print(response)
     if log is not None and response is not None:
        lock.acquire()
        log.write("S -> C: " + response)
        lock.release()
-    if not response or "226" not in response:
+    if not response or ("226" not in response and "426" not in response):
       s.close()
       eprint("5: File was not downloaded")
       exit(5)
 
-    message = "QUIT\r\n"
-    send_with_response(s, message, 7, "7: Cannot Quit", "221", log, lock)
-    s.close()
+    send_quit(s, log, lock, 0)
 
 def main():
    args = parse_args()
