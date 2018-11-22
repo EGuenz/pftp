@@ -106,10 +106,17 @@ def parse_config(args):
     thread_list = []
     t_count = 0
     f.seek(0)
+
+    prevfilename = None
     for line in f.readlines():
        argdict = parse_config_line(line, line_count, t_count, args.port, args.log)
        if argdict is None:
            return None, 4, "4: Syntax Error in Config file"
+       filename = argdict["file"]
+       if prevfilename is not None:
+           if filename != prevfilename:
+               return None, 4, "4: Syntax Error different filenames"
+       prevfilename = filename
        thread_list.append(argdict)
        t_count += 1
     return thread_list, 0, ""
