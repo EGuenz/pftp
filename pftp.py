@@ -7,7 +7,6 @@ import ipaddress
 import threading
 import time
 import re
-from queue import Queue
 from ast import literal_eval as make_tuple
 
 class ThrowingArgumentParser(argparse.ArgumentParser):
@@ -136,10 +135,10 @@ def send_with_response(sock, message, error, error_message, expected_response, l
        lock.release()
     if not response or expected_response not in response:
       #Checks not called from send_quit
+      eprint(error_message)
       if "QUIT" not in message:
         send_quit(sock, log, lock, error)
 
-      eprint(error_message)
     return response
 
 # returns ipv4 and portno parsed from server response to PASV
@@ -285,8 +284,6 @@ def execute_ftp(args, log, file, lock):
     response = send_with_response(s, message, 3, "3: File not found on SIZE", "213 ", log, lock)
     file_size = get_file_size(response)
     starting_pos, read_size = download_position(args["t_count"], args["num_threads"], file_size)
-
-    #q = Queue()
 
 
     message = "REST " + str(starting_pos) + "\r\n"
