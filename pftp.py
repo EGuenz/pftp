@@ -50,30 +50,37 @@ def download_position(t_count, num_threads, file_size):
    return starting_pos, read_bytes
 
 def parse_config_line(line, num_threads, t_count, port, logfile):
-    try:
+
       if line.find('ftp://') == 0:
          line = line[6:]
-      username = line[:line.find(':')]
-      line = line[line.find(':') + 1:]
-      password = line[:line.find('@')]
-      line = line[line.find('@') + 1:]
-      server = line[:line.find('/')]
-      line = line[line.find('/') + 1:]
+      col = line.find(':')
+      if col < 0:
+          return None
+      username = line[:col]
+      line = line[col + 1:]
+      atsymbol = line.find('@')
+      if atsymbol < 0:
+          return None
+      password = line[:atsymbol]
+      line = line[atsymbol + 1:]
+      slash = line.find('/')
+      if slash < 0:
+          return None
+      server = line[:slash]
+      line = line[slash + 1:]
       file = line[:line.find('\n')]
-    except:
-      return None
 
-    args = {
-    'server' : server,
-    'file' : file,
-    'username' : username,
-    'password' : password,
-    'port' : port,
-    'logfile' : logfile,
-    't_count' : t_count,
-    'num_threads' : num_threads
-    }
-    return args
+      args = {
+      'server' : server,
+      'file' : file,
+      'username' : username,
+      'password' : password,
+      'port' : port,
+      'logfile' : logfile,
+      't_count' : t_count,
+      'num_threads' : num_threads
+      }
+      return args
 
 def parse_config(args):
     if not hasattr(args, 'thread'):
@@ -102,7 +109,7 @@ def parse_config(args):
     for line in f.readlines():
        argdict = parse_config_line(line, line_count, t_count, args.port, args.log)
        if argdict is None:
-           return None, 4, "Syntax Error in Config file"
+           return None, 4, "4: Syntax Error in Config file"
        thread_list.append(argdict)
        t_count += 1
     return thread_list, 0, ""
