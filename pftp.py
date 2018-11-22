@@ -68,7 +68,7 @@ def parse_config_line(line, num_threads, t_count, port, logfile):
           return None
       server = line[:slash]
       line = line[slash + 1:]
-      file = line[:line.find('\n')]
+      file = line.rstrip(' \t\n\r')
 
       args = {
       'server' : server,
