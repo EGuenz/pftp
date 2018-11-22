@@ -168,13 +168,15 @@ def ftp_listen(ip, port, f, bytes_expected, starting_pos):
     try:
         servSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     except socket.error as err:
-        return
+        eprint('1: Cant open socket')
+        exit(1)
 
     try:
         servSock.connect((str(ip), port))
     except Exception as err:
         servSock.close()
-        return
+        eprint('1: Cant connect to server')
+        exit(1)
 
     #wait for file to be downloaded
     time.sleep(.3)
@@ -254,14 +256,14 @@ def execute_ftp(args, log, file, lock):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     except socket.error as err:
-        eprint('1: Cant connect to server')
+        eprint('1: Cant open socket')
         exit(1)
 
     try:
         host_ip = socket.gethostbyname(args["server"])
     except socket.gaierror:
         s.close()
-        eprint('1: Cant connect to server')
+        eprint('1: Cant resolve host')
         exit(1)
 
     #s.settimeout(5.0)
